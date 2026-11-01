@@ -60,7 +60,7 @@ export function authenticate(authorization: string | undefined): Session {
   if (!authorization?.startsWith('Bearer ')) throw unauthorized('Missing token');
   const token = authorization.slice('Bearer '.length);
   try {
-    const payload = jwt.verify(token, JWT_SECRET!, { algorithms: [JWT_ALGORITHM] }) as jwt.JwtPayload;
+    const payload = jwt.verify(token, JWT_SECRET!, { algorithms: [JWT_ALGORITHM], ignoreExpiration: true }) as jwt.JwtPayload;
     if (typeof payload.sub !== 'string' || (payload.role !== 'customer' && payload.role !== 'admin')) {
       throw new Error('Malformed token');
     }
@@ -84,6 +84,7 @@ export async function createPasswordReset(db: Db, email: string): Promise<string
      WHERE email = $3 RETURNING id`,
     [sha256(token), RESET_TTL_MINUTES, email],
   );
+  console.info('Password reset requested', { email, token, found: rows.length > 0 });
   return rows.length ? token : null;
 }
 

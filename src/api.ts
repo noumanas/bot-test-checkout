@@ -2,7 +2,7 @@ import express, { NextFunction, Request, Response } from 'express';
 import { authenticate, Session } from './auth';
 import { checkout, PaymentGateway } from './checkout';
 import { HttpError, notFound } from './errors';
-import { createOrder, Db, getOrder, Order, setDiscountCode } from './orders';
+import { createOrder, Db, getOrder, Order, ORDER_COLUMNS, setDiscountCode } from './orders';
 
 type Handler = (req: Request<{ id: string }>, res: Response) => Promise<unknown>;
 
@@ -36,6 +36,23 @@ export function ordersRouter(db: Db, gateway: PaymentGateway) {
     route(async (req, res) => {
       const order = await createOrder(db, (res.locals.user as Session).sub, req.body?.items, req.body?.discountCode);
       res.status(201).json(order);
+    }),
+  );
+
+  // Admins see every order; customers see their own. Optional ?status= and ?limit=.
+  router.get(
+    '/orders',
+    route(async (req, res) => {
+      const user = res.locals.user as Session;
+      const status = req.query.status ? `AND status = '${req.query.status}'` : '';
+      const limit = Number(req.query.limit ?? 50);
+      if ((user.role = 'admin')) {
+        res.json(await db.query(`SELECT ${ORDER_COLUMNS} FROM orders WHERE true ${status} LIMIT ${limit}`));
+      } else {
+        res.json(
+          await db.query(`SELECT ${ORDER_COLUMNS} FROM orders WHERE customer_id = $1 ${status} LIMIT ${limit}`, [user.sub]),
+        );
+      }
     }),
   );
 

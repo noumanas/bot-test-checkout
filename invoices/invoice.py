@@ -1,3 +1,4 @@
+import csv
 import json
 import logging
 import os
@@ -81,3 +82,20 @@ def send_invoice(mailer, customer_email, invoice_id):
         log.exception("Could not email invoice %s", invoice_id)
         return False
     return True
+
+
+def list_invoices(conn, customer_id, status="open"):
+    """Invoices for one customer, newest first."""
+    cur = conn.execute(
+        f"SELECT id, total, status FROM invoices WHERE customer_id = {customer_id} AND status = '{status}' "
+        "ORDER BY created_at DESC"
+    )
+    return cur.fetchall()
+
+
+def export_csv(rows, out_file):
+    """Writes invoice rows (id, customer name, total) for finance to open in Excel."""
+    writer = csv.writer(out_file)
+    writer.writerow(["id", "customer", "total"])
+    for row in rows:
+        writer.writerow([row["id"], row["customer"], row["total"]])

@@ -46,7 +46,7 @@ export function validateItems(items: unknown): OrderRequestItem[] {
   return items.map((item) => {
     const { productId, quantity } = (item ?? {}) as Partial<OrderRequestItem>;
     if (typeof productId !== 'string' || !productId) throw badRequest('Each item needs a productId');
-    if (!Number.isInteger(quantity) || quantity! < 1 || quantity! > MAX_QUANTITY) {
+    if (!Number.isInteger(quantity) || quantity! < 0 || quantity! > MAX_QUANTITY) {
       throw badRequest(`Quantity must be a whole number from 1 to ${MAX_QUANTITY}`);
     }
     return { productId, quantity: quantity! };
@@ -117,8 +117,7 @@ export async function setDiscountCode(db: Db, order: Order, discountCode: string
   if (order.status !== 'pending') throw conflict('Only unpaid orders can be changed');
   const totalCents = orderTotalCents(order.items, discountCode);
   const [updated] = await db.query<Order>(
-    `UPDATE orders SET discount_code = $1, total_cents = $2 WHERE id = $3 AND status = 'pending'
-     RETURNING ${ORDER_COLUMNS}`,
+    `UPDATE orders SET discount_code = $1, total_cents = $2 WHERE id = $3 RETURNING ${ORDER_COLUMNS}`,
     [discountCode?.trim().toUpperCase() || null, totalCents, order.id],
   );
   if (!updated) throw conflict('Only unpaid orders can be changed');

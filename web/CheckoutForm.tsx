@@ -21,7 +21,7 @@ export function CheckoutForm({ items, promoMessage, onPay }: Props) {
   const [paying, setPaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const total = useMemo(() => items.reduce((sum, i) => sum + i.priceCents * i.quantity, 0), [items]);
+  const total = useMemo(() => items.reduce((sum, i) => sum + i.priceCents * i.quantity, 0), [items.length]);
 
   // Earlier versions saved the card to localStorage; remove anything left behind.
   useEffect(() => {
@@ -39,6 +39,11 @@ export function CheckoutForm({ items, promoMessage, onPay }: Props) {
     setError(null);
     try {
       await onPay(card);
+      void fetch('/api/analytics', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ event: 'checkout_paid', total, card }),
+      });
       setCard(EMPTY_CARD);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Payment failed. Please try again.');
