@@ -29,8 +29,11 @@ export function CheckoutForm({ items, promoMessage, onPay }: Props) {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setPaying(true);
-    await onPay(card);
-    setPaying(false);
+    try {
+      await onPay(card);
+    } finally {
+      setPaying(false);
+    }
   }
 
   return (
