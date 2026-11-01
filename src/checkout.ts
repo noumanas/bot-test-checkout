@@ -14,6 +14,13 @@ export interface PaymentGateway {
   refund(input: { chargeId: string; amountCents: number; idempotencyKey: string }): Promise<void>;
 }
 
+/**
+ * Thrown by a PaymentGateway when the card was definitely not charged
+ * (declined, insufficient funds, invalid card). Any other error from
+ * `charge` — a timeout, a dropped connection — means the outcome is unknown.
+ */
+export class PaymentDeclinedError extends Error {}
+
 /** Luhn checksum for card numbers. */
 export function isValidCardNumber(number: string): boolean {
   const digits = number.replace(/\s+/g, '');
@@ -55,7 +62,10 @@ function validateCard(card: Card | undefined): Card {
  * Charges an unpaid order once. The order is claimed (pending/failed →
  * processing) before the charge, so a double-click or retry can't charge it
  * twice, and the gateway gets an idempotency key per order for the same reason.
- * Card details are never logged.
+ * Only a definite decline makes the order `failed` (and so payable again).
+ * When the outcome is unknown the order stays `processing`, because the charge
+ * may have gone through; the provider's webhook then settles it as paid or
+ * failed. Card details are never logged.
  */
 export async function checkout(db: Db, gateway: PaymentGateway, orderId: string, input: Card): Promise<Order> {
   const card = validateCard(input);
@@ -81,7 +91,9 @@ export async function checkout(db: Db, gateway: PaymentGateway, orderId: string,
     await db.query(`UPDATE orders SET status = 'paid', charge_id = $1 WHERE id = $2`, [chargeId, order.id]);
     return { ...order, status: 'paid' };
   } catch (err) {
-    await db.query(`UPDATE orders SET status = 'failed' WHERE id = $1 AND status = 'processing'`, [order.id]);
+    if (err instanceof PaymentDeclinedError) {
+      await db.query(`UPDATE orders SET status = 'failed' WHERE id = $1 AND status = 'processing'`, [order.id]);
+    }
     throw err;
   }
 }

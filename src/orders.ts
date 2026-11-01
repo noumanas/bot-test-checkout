@@ -40,18 +40,28 @@ const DISCOUNTS: Record<string, number> = {
   LAUNCH25: 25,
 };
 
-const MAX_QUANTITY = 100;
+/** Most of one product a single order may contain. */
+export const MAX_QUANTITY = 100;
 
+/**
+ * Checks the requested items and merges lines for the same product, so the
+ * per-product limit applies to the combined quantity and stock is taken once
+ * per product.
+ */
 export function validateItems(items: unknown): OrderRequestItem[] {
   if (!Array.isArray(items) || items.length === 0) throw badRequest('Order has no items');
-  return items.map((item) => {
+  const merged = new Map<string, number>();
+  for (const item of items) {
     const { productId, quantity } = (item ?? {}) as Partial<OrderRequestItem>;
     if (typeof productId !== 'string' || !productId) throw badRequest('Each item needs a productId');
     if (!Number.isInteger(quantity) || quantity! < 1 || quantity! > MAX_QUANTITY) {
       throw badRequest(`Quantity must be a whole number from 1 to ${MAX_QUANTITY}`);
     }
-    return { productId, quantity: quantity! };
-  });
+    const combined = (merged.get(productId) ?? 0) + quantity!;
+    if (combined > MAX_QUANTITY) throw badRequest(`At most ${MAX_QUANTITY} of each product per order`);
+    merged.set(productId, combined);
+  }
+  return [...merged].map(([productId, quantity]) => ({ productId, quantity }));
 }
 
 /** Total in integer cents. Throws on an unknown discount code rather than silently ignoring it. */

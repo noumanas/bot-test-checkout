@@ -1,7 +1,6 @@
 import { badRequest } from './errors';
 
 const CARRIER_API = 'https://api.example-carrier.com/v2/rates';
-const CARRIER_KEY = process.env.CARRIER_API_KEY;
 const CARRIER_TIMEOUT_MS = 5000;
 
 /** Orders at or above this subtotal ship free. */
@@ -33,7 +32,8 @@ export async function shippingCents(parcel: Parcel, subtotalCents: number): Prom
   const flatRate = Object.hasOwn(FLAT_RATE_CENTS, country) ? FLAT_RATE_CENTS[country] : undefined;
   if (flatRate === undefined) throw badRequest(`We don't ship to ${parcel.destinationCountry} yet`);
   if (subtotalCents >= FREE_SHIPPING_THRESHOLD_CENTS) return 0;
-  if (!CARRIER_KEY) return flatRate;
+  const carrierKey = process.env.CARRIER_API_KEY;
+  if (!carrierKey) return flatRate;
 
   const query = new URLSearchParams({
     country,
@@ -43,7 +43,7 @@ export async function shippingCents(parcel: Parcel, subtotalCents: number): Prom
   try {
     const res = await fetch(`${CARRIER_API}?${query}`, {
       // The key goes in a header, so it never appears in URLs or logs.
-      headers: { Authorization: `Bearer ${CARRIER_KEY}` },
+      headers: { Authorization: `Bearer ${carrierKey}` },
       signal: AbortSignal.timeout(CARRIER_TIMEOUT_MS),
     });
     if (!res.ok) throw new Error(`carrier answered ${res.status}`);
