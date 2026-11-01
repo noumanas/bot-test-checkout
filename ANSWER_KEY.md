@@ -1,5 +1,7 @@
 # Checkout test: answer key
 
+> **Status:** every bug below is fixed in the working tree (the "fix all" change after commit `d96f2b9`). Pushing that change to the PR tests whether the bot marks earlier findings as fixed instead of reposting them. Use the commits up to `d96f2b9` to re-run the "find the bugs" test.
+
 **Don't commit this file to the test repo.** The PR should contain `src/`, `invoices/`, `web/` and `package.json` only.
 
 A small shop backend and checkout form with bugs planted on purpose. Open it as a PR on a repo where the AuditBench GitHub App is installed, then compare the review against this list. 9 code files means about 9 AI calls per review.

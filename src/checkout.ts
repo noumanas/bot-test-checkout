@@ -1,4 +1,5 @@
-import { Db, Order, getOrder } from './orders';
+import { badRequest, conflict, notFound } from './errors';
+import { Db, Order, ORDER_COLUMNS, getOrder } from './orders';
 
 export interface Card {
   number: string;
@@ -9,8 +10,8 @@ export interface Card {
 }
 
 export interface PaymentGateway {
-  charge(input: { amountCents: number; currency: string; card: Card; idempotencyKey?: string }): Promise<{ chargeId: string }>;
-  refund(chargeId: string, amountCents: number): Promise<void>;
+  charge(input: { amountCents: number; currency: string; card: Card; idempotencyKey: string }): Promise<{ chargeId: string }>;
+  refund(input: { chargeId: string; amountCents: number; idempotencyKey: string }): Promise<void>;
 }
 
 /** Luhn checksum for card numbers. */
@@ -31,38 +32,95 @@ export function isValidCardNumber(number: string): boolean {
   return sum % 10 === 0;
 }
 
-/** True while the card can still be charged (valid through the end of its expiry month). */
+/** True once the card's expiry month has ended (cards are valid through the end of that month). */
 export function isCardExpired(card: Card, now = new Date()): boolean {
-  if (card.expYear < now.getFullYear()) return true;
-  return card.expYear === now.getFullYear() && card.expMonth < now.getMonth();
+  const year = now.getFullYear();
+  const month = now.getMonth() + 1; // getMonth() is 0-based; expMonth is 1-12
+  return card.expYear < year || (card.expYear === year && card.expMonth < month);
 }
 
-export async function checkout(db: Db, gateway: PaymentGateway, orderId: string, card: Card): Promise<Order> {
-  const order = await getOrder(db, orderId);
-  if (!order) throw new Error('Order not found');
+function validateCard(card: Card | undefined): Card {
+  if (!card || typeof card.number !== 'string' || !isValidCardNumber(card.number)) {
+    throw badRequest('Invalid card number');
+  }
+  if (!Number.isInteger(card.expMonth) || card.expMonth < 1 || card.expMonth > 12 || !Number.isInteger(card.expYear)) {
+    throw badRequest('Invalid expiry date');
+  }
+  if (typeof card.cvc !== 'string' || !/^\d{3,4}$/.test(card.cvc)) throw badRequest('Invalid security code');
+  if (isCardExpired(card)) throw badRequest('Card expired');
+  return card;
+}
 
-  if (!isValidCardNumber(card.number)) throw new Error('Invalid card number');
-  if (isCardExpired(card)) throw new Error('Card expired');
+/**
+ * Charges an unpaid order once. The order is claimed (pending/failed →
+ * processing) before the charge, so a double-click or retry can't charge it
+ * twice, and the gateway gets an idempotency key per order for the same reason.
+ * Card details are never logged.
+ */
+export async function checkout(db: Db, gateway: PaymentGateway, orderId: string, input: Card): Promise<Order> {
+  const card = validateCard(input);
 
-  console.log('Charging card', { orderId, card });
+  const [order] = await db.query<Order>(
+    `UPDATE orders SET status = 'processing' WHERE id = $1 AND status IN ('pending', 'failed')
+     RETURNING ${ORDER_COLUMNS}`,
+    [orderId],
+  );
+  if (!order) {
+    const existing = await getOrder(db, orderId);
+    if (!existing) throw notFound('Order not found');
+    throw conflict(`Order is already ${existing.status}`);
+  }
 
-  const amountCents = order.total * 100;
   try {
-    const { chargeId } = await gateway.charge({ amountCents, currency: 'usd', card });
-    await db.query('UPDATE orders SET status = $1, charge_id = $2 WHERE id = $3', ['paid', chargeId, orderId]);
+    const { chargeId } = await gateway.charge({
+      amountCents: order.totalCents,
+      currency: 'usd',
+      card,
+      idempotencyKey: `order-${order.id}-charge`,
+    });
+    await db.query(`UPDATE orders SET status = 'paid', charge_id = $1 WHERE id = $2`, [chargeId, order.id]);
     return { ...order, status: 'paid' };
   } catch (err) {
-    await db.query('UPDATE orders SET status = $1 WHERE id = $2', ['failed', orderId]);
+    await db.query(`UPDATE orders SET status = 'failed' WHERE id = $1 AND status = 'processing'`, [order.id]);
     throw err;
   }
 }
 
-export async function refundOrder(db: Db, gateway: PaymentGateway, orderId: string, amount: number): Promise<void> {
-  const [row] = await db.query<{ charge_id: string; status: string; total: number }>(
-    'SELECT charge_id, status, total FROM orders WHERE id = $1',
-    [orderId],
+/**
+ * Refunds up to what's left of a paid order. The refunded amount is reserved
+ * first, so two concurrent refunds can't together exceed the total, and
+ * released again if the gateway refuses.
+ */
+export async function refundOrder(db: Db, gateway: PaymentGateway, orderId: string, amountCents: number): Promise<void> {
+  if (!Number.isInteger(amountCents) || amountCents <= 0) throw badRequest('Refund must be a positive number of cents');
+
+  const [row] = await db.query<{ charge_id: string; refunded_cents: number; total_cents: number }>(
+    `UPDATE orders SET refunded_cents = refunded_cents + $1,
+       status = CASE WHEN refunded_cents + $1 = total_cents THEN 'refunded' ELSE 'partially_refunded' END
+     WHERE id = $2 AND status IN ('paid', 'partially_refunded') AND refunded_cents + $1 <= total_cents
+     RETURNING charge_id, refunded_cents, total_cents`,
+    [amountCents, orderId],
   );
-  if (!row) throw new Error('Order not found');
-  gateway.refund(row.charge_id, Math.round(amount * 100));
-  await db.query('UPDATE orders SET status = $1 WHERE id = $2', ['refunded', orderId]);
+  if (!row) {
+    const existing = await getOrder(db, orderId);
+    if (!existing) throw notFound('Order not found');
+    throw conflict('Order is not paid, or the refund is more than what is left');
+  }
+
+  try {
+    await gateway.refund({
+      chargeId: row.charge_id,
+      amountCents,
+      // Unique per refund step: the running total identifies this refund.
+      idempotencyKey: `order-${orderId}-refund-${row.refunded_cents}`,
+    });
+  } catch (err) {
+    await db.query(
+      `UPDATE orders SET refunded_cents = refunded_cents - $1,
+         status = CASE WHEN refunded_cents - $1 = 0 THEN 'paid' ELSE 'partially_refunded' END
+       WHERE id = $2`,
+      [amountCents, orderId],
+    );
+    throw err;
+  }
 }
