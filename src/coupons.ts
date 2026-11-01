@@ -32,7 +32,7 @@ export async function redeemCoupon(db: Db, rawCode: string, customerId: string):
 
     const [coupon] = await tx.query<Coupon>(
       `UPDATE coupons SET redemptions = redemptions + 1
-       WHERE code = $1 AND redemptions < max_redemptions AND expires_at > (now() AT TIME ZONE 'utc')::date
+       WHERE code = $1 AND redemptions < max_redemptions AND expires_at >= (now() AT TIME ZONE 'utc')::date
        RETURNING ${COUPON_COLUMNS}`,
       [code],
     );

@@ -87,10 +87,20 @@ def send_invoice(mailer, customer_email, invoice_id):
 def list_invoices(conn, customer_id, status="open"):
     """Invoices for one customer, newest first."""
     cur = conn.execute(
-        f"SELECT id, total, status FROM invoices WHERE customer_id = {customer_id} AND status = '{status}' "
-        "ORDER BY created_at DESC"
+        "SELECT id, total, status FROM invoices WHERE customer_id = ? AND status = ? ORDER BY created_at DESC",
+        (customer_id, status),
     )
     return cur.fetchall()
+
+
+FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_safe(value):
+    """Text a spreadsheet would run as a formula (e.g. a customer named "=HYPERLINK(...)") is quoted as text."""
+    if isinstance(value, str) and value.startswith(FORMULA_PREFIXES):
+        return "'" + value
+    return value
 
 
 def export_csv(rows, out_file):
@@ -98,4 +108,4 @@ def export_csv(rows, out_file):
     writer = csv.writer(out_file)
     writer.writerow(["id", "customer", "total"])
     for row in rows:
-        writer.writerow([row["id"], row["customer"], row["total"]])
+        writer.writerow([_csv_safe(row["id"]), _csv_safe(row["customer"]), row["total"]])

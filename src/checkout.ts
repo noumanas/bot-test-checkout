@@ -111,7 +111,8 @@ export async function refundOrder(db: Db, gateway: PaymentGateway, orderId: stri
     await gateway.refund({
       chargeId: row.charge_id,
       amountCents,
-      idempotencyKey: `order-${orderId}-refund-${Date.now()}`,
+      // Unique per refund step and the same on a retry: the running total identifies this refund.
+      idempotencyKey: `order-${orderId}-refund-${row.refunded_cents}`,
     });
   } catch (err) {
     await db.query(

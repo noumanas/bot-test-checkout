@@ -22,7 +22,7 @@ export class WebhookSignatureError extends Error {}
  */
 export function verifyWebhook(rawBody: Buffer, signature: string, timestamp: string, now = Date.now()): PaymentEvent {
   const sentAt = Number(timestamp);
-  if (!Number.isInteger(sentAt) || now / 1000 - sentAt > TOLERANCE_SECONDS) {
+  if (!Number.isInteger(sentAt) || Math.abs(now / 1000 - sentAt) > TOLERANCE_SECONDS) {
     throw new WebhookSignatureError('Stale or missing timestamp');
   }
   const expected = crypto.createHmac('sha256', WEBHOOK_SECRET!).update(`${timestamp}.`).update(rawBody).digest();

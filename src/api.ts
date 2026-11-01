@@ -1,8 +1,20 @@
 import express, { NextFunction, Request, Response } from 'express';
 import { authenticate, Session } from './auth';
 import { checkout, PaymentGateway } from './checkout';
-import { HttpError, notFound } from './errors';
-import { createOrder, Db, getOrder, Order, ORDER_COLUMNS, setDiscountCode } from './orders';
+import { badRequest, HttpError, notFound } from './errors';
+import {
+  createOrder,
+  Db,
+  getOrder,
+  Order,
+  ORDER_COLUMNS,
+  ORDER_STATUSES,
+  OrderStatus,
+  setDiscountCode,
+} from './orders';
+
+const DEFAULT_PAGE = 50;
+const MAX_PAGE = 200;
 
 type Handler = (req: Request<{ id: string }>, res: Response) => Promise<unknown>;
 
@@ -44,15 +56,27 @@ export function ordersRouter(db: Db, gateway: PaymentGateway) {
     '/orders',
     route(async (req, res) => {
       const user = res.locals.user as Session;
-      const status = req.query.status ? `AND status = '${req.query.status}'` : '';
-      const limit = Number(req.query.limit ?? 50);
-      if ((user.role = 'admin')) {
-        res.json(await db.query(`SELECT ${ORDER_COLUMNS} FROM orders WHERE true ${status} LIMIT ${limit}`));
-      } else {
-        res.json(
-          await db.query(`SELECT ${ORDER_COLUMNS} FROM orders WHERE customer_id = $1 ${status} LIMIT ${limit}`, [user.sub]),
-        );
+      const { status, limit } = req.query;
+      if (status !== undefined && !ORDER_STATUSES.includes(status as OrderStatus)) throw badRequest('Unknown status');
+      const pageSize = limit === undefined ? DEFAULT_PAGE : Number(limit);
+      if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > MAX_PAGE) {
+        throw badRequest(`limit must be a whole number from 1 to ${MAX_PAGE}`);
       }
+
+      // Every value is a bound parameter; only the fixed column names are in the SQL text.
+      const where: string[] = [];
+      const params: unknown[] = [];
+      if (user.role !== 'admin') {
+        params.push(user.sub);
+        where.push(`customer_id = $${params.length}`);
+      }
+      if (status !== undefined) {
+        params.push(status);
+        where.push(`status = $${params.length}`);
+      }
+      params.push(pageSize);
+      const filter = where.length ? `WHERE ${where.join(' AND ')}` : '';
+      res.json(await db.query(`SELECT ${ORDER_COLUMNS} FROM orders ${filter} LIMIT $${params.length}`, params));
     }),
   );
 
