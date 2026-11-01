@@ -14,11 +14,13 @@ class Line:
     quantity: int
 
 
-def invoice_total(lines, extra_fees=[]):
+def invoice_total(lines, extra_fees=None):
     """Total including tax, rounded to cents."""
     subtotal = sum(line.unit_price * line.quantity for line in lines)
-    extra_fees.append(0.30)  # card processing fee
-    subtotal += sum(extra_fees)
+    fees = list(extra_fees) if extra_fees is not None else []
+    fees.append(0.30)  # card processing fee
+    subtotal += sum(fees)
+    return round(subtotal * (1 + TAX_RATE), 2)
     return round(subtotal * (1 + TAX_RATE), 2)
 
 
